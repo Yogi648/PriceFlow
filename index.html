@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PriceFlow — Amazon daily price processor</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+/* Internal processing tabs — intentionally hidden from user view */
+#tabs button[data-tab="fba"],
+#tabs button[data-tab="local"],
+#tabs button[data-tab="warehouse"],
+#tabs button[data-tab="warehouseRemoved"],
+#tabs button[data-tab="warehouse-removed"] {
+  display: none !important;
+}
+</style>
+
+<style>[data-internal="true"]{display:none!important}</style>
+<style>
+.backend-manager { margin-top: 18px; }
+.backend-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  border: 1px solid #d8e2f0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  background: #fff;
+}
+.backend-manager .status { margin-top: 12px; }
+</style>
+
+<style>
+.backend-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.backend-upload-btn,.backend-download-btn{
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  border:1px solid #d8e2f0;border-radius:10px;padding:10px 16px;background:#fff;
+}
+.backend-download-btn:disabled{opacity:.5;cursor:not-allowed}
+</style>
+</head>
+<body>
+  <header><div class="shell nav"><a class="brand" href="#">Price<span>Flow</span></a><div class="nav-note"><i></i> Daily Amazon price processor</div></div></header>
+  <main class="shell">
+    <section class="intro"><p class="eyebrow">Amazon.in listing operations</p><h1>Upload. Review. Price. Export.</h1><p>Process daily Amazon listings, warehouse stock, price data, and saved backend ASIN details in one place.</p></section>
+    <section class="rules"><strong>Current rules</strong><span>Target profit ₹150</span><span>Standard charge 5%</span><span>SSD / Motherboard / RAM / Graphic Card charge 10%</span><span>Price alert: ₹500 or 10%</span><span>Last Update <48 hours = PRICE UPDATE; ≥48 hours = SKIP</span><span>None / No data / Error / Not Available = Inactive</span><span>Prime = 10 days | False = 25 days | None/blank = 15 days | Number + 7 days, max 30</span></section>
+    <section class="panel uploads">
+      <div class="panel-head"><div><h2>Daily files</h2><p>Upload the latest files, then run the processor.</p></div><button id="run" class="primary">Run daily process</button></div>
+      <div class="upload-grid">
+        <label class="drop"><b>1</b><span>Amazon All Listings</span><small>.xlsx / .xls / .txt / .tsv / .csv</small><input id="listingsFile" type="file" accept=".xlsx,.xls,.txt,.tsv,.csv"></label>
+        <label class="drop"><b>2</b><span>Daily price data</span><small>.csv</small><input id="pricingFile" type="file" accept=".csv,.txt"></label>
+        <label class="drop"><b>3</b><span>Warehouse stock</span><small>.xlsx / .csv</small><input id="warehouseFile" type="file" accept=".xlsx,.xls,.csv"></label>
+      </div>
+      <p class="status" id="status">Choose the files for today. Backend data is saved in this browser after each upload.</p>
+    </section>
+    
+<section class="panel backend-manager">
+  <div class="panel-head">
+    <div>
+      <h2>Backend ASIN Database</h2>
+      <p>Stored separately. Weight and Ref Fee are automatically matched by ASIN during daily pricing.</p>
+    </div>
+    <div class="backend-actions">
+      <label class="text-btn backend-upload-btn">
+        Upload / Update Backend
+        <input id="backendFile" type="file" accept=".csv,.xlsx,.xls" hidden>
+      </label>
+      <button id="downloadBackend" class="text-btn backend-download-btn" type="button">
+        Download Backend Database
+      </button>
+    </div>
+  </div>
+  <p class="status" id="backendStatus">Backend database is stored separately and will be connected automatically.</p>
+</section>
+    <section class="metrics" id="metrics"><div><small>Listings</small><b>—</b></div><div><small>Final upload rows</small><b>—</b></div><div><small>Price alerts</small><b>—</b></div></section>
+    <section class="panel results">
+      <div class="panel-head"><div><h2>Results</h2><p>Review each group before exporting.</p></div><button id="downloadFinal" class="primary ghost" disabled>Download final upload CSV</button>
+        <button id="downloadAllExcel" class="primary ghost" disabled>Download all results Excel</button></div>
+      <div class="tabs" id="tabs">
+        <button class="active" data-tab="final">Final upload <em id="finalCount">0</em></button>
+        
+        
+        <button data-tab="localRemoved">Local Shops Removed <em id="localRemovedCount">0</em></button><button data-tab="fbaRemoved">FBA Removed <em id="fbaRemovedCount">0</em></button>
+        
+        
+        <button data-tab="skipped48">Skipped &lt;48h <em id="skipped48Count">0</em></button>
+        <button data-tab="unrun">Un Run ASINs <em id="unrunCount">0</em></button>
+        <button data-tab="inactive">Inactive <em id="inactiveCount">0</em></button>
+        <button data-tab="backend">Backend Data <em id="backendCount">0</em></button>
+        
+        <button data-tab="alerts">Price Alerts <em id="alertCount">0</em></button>
+      </div>
+      <div class="table-tools"><span id="tableLabel">Final Amazon upload data</span><button id="downloadTab" class="text-btn" disabled>Download this tab</button></div>
+      <div class="table-wrap"><table><thead id="thead"></thead><tbody id="tbody"><tr><td class="empty">Run the process to see your data.</td></tr></tbody></table></div>
+    </section>
+    <details class="panel setup"><summary>Supabase setup for shared, permanent data</summary><p>Without setup, the app securely keeps backend records and price history in this browser. For permanent shared storage, run <code>supabase.sql</code> in Supabase SQL Editor, then paste the Project URL and publishable key in <code>app.js</code>.</p></details>
+  </main>
+  <footer><div class="shell">PriceFlow keeps source files in your browser. Review results before uploading them to Amazon.</div></footer>
+  <script src="app.js"></script>
+</body></html>
