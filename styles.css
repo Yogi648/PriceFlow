@@ -3,6 +3,6 @@
 .backend{position:relative;display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center}
 .backend .backend-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
 .backend .backend-actions em{font-style:normal;font-size:12px;font-weight:800;padding:7px 10px;border-radius:999px;background:#eef6ff;color:#1769d2;white-space:nowrap}
-.backend .backend-count{font-size:12px;color:#17375f;background:#f6f9fd;border:1px solid #dbe6f3;padding:8px 11px;border-radius:9px;white-space:nowrap}
+.backend .backend-count{font-size:13px;color:#0b2342;background:#eef6ff;border:1px solid #cfe0f5;padding:9px 13px;border-radius:9px;white-space:nowrap;font-weight:800}.backend .backend-count span{font-size:17px;color:#1769e8;margin-right:4px}
 .backend .backend-note{grid-column:1/-1;border-top:1px solid #e2eaf3;padding-top:12px;color:#54708f;font-size:12px}
 @media(max-width:900px){.backend{grid-template-columns:auto 1fr}.backend .backend-actions{grid-column:1/-1;justify-content:flex-start}}
