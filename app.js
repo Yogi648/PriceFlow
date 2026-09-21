@@ -159,14 +159,14 @@ function calculateLeadTime(isPrime, rawLeadTime) {
   const prime = clean(isPrime).toLowerCase();
   const raw = clean(rawLeadTime).toLowerCase();
 
-  // Prime = 10 days.
+  // Prime = 7 days.
   if (prime === 'yes' || prime === 'true' || prime === '1' || prime === 'prime') {
-    return '10';
+    return '7';
   }
 
-  // Non-prime with no/None value = 15 days.
+  // Non-prime with no/None value = 20 days.
   if (!raw || ['none', 'null', 'n/a', 'na', 'not available'].includes(raw)) {
-    return '15';
+    return '20';
   }
 
   // Any numeric lead time = existing value + 7, capped at 30.
@@ -175,8 +175,8 @@ function calculateLeadTime(isPrime, rawLeadTime) {
     return String(Math.min(30, n + 7));
   }
 
-  // Non-prime invalid/empty text also defaults to 15.
-  return '15';
+  // Non-prime invalid/empty text also defaults to 25.
+  return '25';
 }
 
 function roundPrice(v) {
