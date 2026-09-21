@@ -29,3 +29,11 @@ drop policy if exists "PriceFlow public read price history" on public.price_hist
 drop policy if exists "PriceFlow public insert price history" on public.price_history;
 create policy "PriceFlow public read price history" on public.price_history for select to anon, authenticated using (true);
 create policy "PriceFlow public insert price history" on public.price_history for insert to anon, authenticated with check (true);
+
+
+-- Ensure the public API roles can use the tables through Supabase REST.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on table public.backend_asins to anon, authenticated;
+grant select, insert on table public.backend_history to anon, authenticated;
+grant select, insert on table public.price_history to anon, authenticated;
+grant usage, select on all sequences in schema public to anon, authenticated;

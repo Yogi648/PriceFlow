@@ -1,5 +1,6 @@
 /* PriceFlow Supabase public configuration.
-   Paste ONLY the Supabase anon/public key here.
-   NEVER paste a service_role key into a public GitHub Pages site.
+   Put ONLY the project's anon/public key here.
+   NEVER put the service_role key in GitHub Pages.
 */
+window.PRICEFLOW_SUPABASE_URL = 'https://fbeizcukqclltfclzi.supabase.co';
 window.PRICEFLOW_SUPABASE_ANON_KEY = '';
