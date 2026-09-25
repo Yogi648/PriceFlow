@@ -200,12 +200,15 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
   </section>
 </main>
 
+<script src="storage-config.js"></script>
+<script src="storage-adapter.js"></script>
 <script>
 const BACKEND_KEY='priceflow_backend_v1';
 const DB_NAME='PriceFlowDB';
 const DB_VERSION=1;
 const STORE_NAME='backend';
 let backendData=[];
+let backendCount=0;
 let results=[];
 let dbPromise=null;
 
@@ -251,11 +254,21 @@ function setFileName(input,id){
   document.getElementById(id).textContent=input.files?.[0]?.name||'Choose file';
 }
 async function loadBackend(){
-  try{backendData=await readBackendDB()}catch(e){backendData=[]}
+  try{
+    if(window.priceflowStorage?.configured()){
+      backendCount=await window.priceflowStorage.getBackendCount();
+      backendData=[];
+    }else{
+      backendData=await readBackendDB();
+      backendCount=backendData.length;
+    }
+  }catch(e){
+    try{backendData=await readBackendDB();backendCount=backendData.length}catch(f){backendData=[];backendCount=0}
+  }
   updateBackendUI();
 }
 function updateBackendUI(){
-  const n=backendData.length;
+  const n=backendCount;
   document.getElementById('backendCount').textContent=n.toLocaleString('en-IN');
   document.getElementById('backendStat').textContent=n.toLocaleString('en-IN');
   document.getElementById('nBackend').textContent=n.toLocaleString('en-IN');
@@ -291,6 +304,16 @@ async function importBackend(input){
   const msg=document.getElementById('backendMessage');
   msg.className='message';msg.textContent='Importing backend database: '+file.name+'...';
   try{
+    if(window.priceflowStorage?.configured()){
+      const result=await window.priceflowStorage.uploadBackend(file);
+      backendCount=Number(result.count)||0;
+      backendData=[];
+      localStorage.setItem(BACKEND_KEY+'_date',new Date().toLocaleString('en-IN'));
+      updateBackendUI();
+      msg.className='message ok';
+      msg.textContent=`Backend database saved successfully: ${backendCount.toLocaleString('en-IN')} unique ASINs. Stored in the configured storage API.`;
+      return;
+    }
     const text=await file.text();
     let rows=parseCSV(text);
     if(!rows.length) throw new Error('No readable rows found. For Excel files, export the backend file as CSV and upload it.');
@@ -300,6 +323,7 @@ async function importBackend(input){
       if(asin) map.set(asin,{ASIN:asin,SKU:r.SKU||'',WEIGHT:r.WEIGHT||r['ITEM WEIGHT']||'',REFERRAL_FEE:r.REFERRAL_FEE||r['REF FEE']||r['REFERRAL FEE']||''});
     });
     backendData=[...map.values()];
+    backendCount=backendData.length;
     await saveBackendDB(backendData);
     localStorage.setItem(BACKEND_KEY+'_date',new Date().toLocaleString('en-IN'));
     updateBackendUI();
@@ -310,6 +334,10 @@ async function importBackend(input){
   }finally{input.value=''}
 }
 function downloadBackend(){
+  if(window.priceflowStorage?.configured()){
+    window.priceflowStorage.downloadBackend().then(blob=>downloadFile('PriceFlow_Backend_Database.csv','text/csv;charset=utf-8',blob)).catch(e=>alert('Backend download failed: '+e.message));
+    return;
+  }
   if(!backendData.length){alert('No backend ASIN data is stored yet.');return}
   const headers=['ASIN','SKU','WEIGHT','REFERRAL_FEE'];
   const lines=[headers.join(',')];
@@ -323,7 +351,7 @@ function runDailyProcess(){
   msg.textContent='Daily process started. Existing pricing rules are unchanged.';
   document.getElementById('runBtn').disabled=true;
   setTimeout(()=>{
-    const n=backendData.length;
+    const n=backendCount;
     document.getElementById('listingsCount').textContent='—';
     document.getElementById('finalCount').textContent='—';
     document.getElementById('alertsCount').textContent='0';
