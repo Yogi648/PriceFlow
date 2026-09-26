@@ -1,0 +1,5 @@
+{
+  "name": "priceflow-storage-api",
+  "private": true,
+  "type": "module"
+}
