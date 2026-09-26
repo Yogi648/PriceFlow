@@ -274,6 +274,9 @@ function updateBackendUI(){
   document.getElementById('nBackend').textContent=n.toLocaleString('en-IN');
   const saved=localStorage.getItem(BACKEND_KEY+'_date');
   document.getElementById('backendUpdated').textContent=n?`Database active • ${n.toLocaleString('en-IN')} ASINs stored${saved?' • Last updated '+saved:''}`:'No backend database uploaded yet.';
+  document.getElementById('backendMessage').textContent=window.priceflowStorage?.configured()
+    ? 'Backend data is connected to Cloudflare storage.'
+    : 'Backend data is saved in this browser and retained after page refresh.';
 }
 function normalizeRow(row){
   const out={};
@@ -342,7 +345,7 @@ function downloadBackend(){
   const headers=['ASIN','SKU','WEIGHT','REFERRAL_FEE'];
   const lines=[headers.join(',')];
   backendData.forEach(r=>lines.push(headers.map(h=>csvCell(r[h])).join(',')));
-  downloadFile('PriceFlow_Backend_Database.csv','text/csv;charset=utf-8',lines.join('\\n'));
+  downloadFile('PriceFlow_Backend_Database.csv','text/csv;charset=utf-8',lines.join('\n'));
 }
 function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
 function runDailyProcess(){
@@ -376,7 +379,7 @@ function downloadResultsCSV(){
   if(!results.length){alert('No results available yet.');return}
   const headers=['ASIN','SKU','STATUS','PRICE','WEIGHT','REFERRAL_FEE'];
   const lines=[headers.join(',')].concat(results.map(r=>headers.map(h=>csvCell(r[h])).join(',')));
-  downloadFile('PriceFlow_Final_Upload.csv','text/csv;charset=utf-8',lines.join('\\n'));
+  downloadFile('PriceFlow_Final_Upload.csv','text/csv;charset=utf-8',lines.join('\n'));
 }
 function downloadFile(name,type,text){
   const blob=new Blob([text],{type});const a=document.createElement('a');
