@@ -147,6 +147,7 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
           Upload / Update Backend
           <input id="backendInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="importBackend(this)">
         </label>
+        <button class="btn" id="migrateBackend" onclick="migrateLocalBackend()">Migrate Browser Backup</button>
         <button class="btn" onclick="downloadBackend()">Download Backend Database</button>
       </div>
     </div>
@@ -346,6 +347,29 @@ function downloadBackend(){
   const lines=[headers.join(',')];
   backendData.forEach(r=>lines.push(headers.map(h=>csvCell(r[h])).join(',')));
   downloadFile('PriceFlow_Backend_Database.csv','text/csv;charset=utf-8',lines.join('\n'));
+}
+async function migrateLocalBackend(){
+  const button=document.getElementById('migrateBackend');
+  const msg=document.getElementById('backendMessage');
+  try{
+    const localRows=await readBackendDB();
+    if(!localRows.length){msg.textContent='No browser backup was found to migrate.';return}
+    if(!window.priceflowStorage?.configured()){msg.textContent='Cloudflare storage is not configured.';return}
+    const headers=['ASIN','SKU','WEIGHT','REFERRAL_FEE'];
+    const lines=[headers.join(',')];
+    localRows.forEach(row=>lines.push(headers.map(header=>csvCell(row[header])).join(',')));
+    button.disabled=true;
+    msg.className='message';
+    msg.textContent=`Migrating ${localRows.length.toLocaleString('en-IN')} browser records to Cloudflare...`;
+    const result=await window.priceflowStorage.uploadBackend(new File([lines.join('\n')],'PriceFlow_Backend_Database.csv',{type:'text/csv'}));
+    backendCount=Number(result.count)||localRows.length;
+    updateBackendUI();
+    msg.className='message ok';
+    msg.textContent=`Cloudflare migration complete: ${backendCount.toLocaleString('en-IN')} backend records stored.`;
+  }catch(error){
+    msg.className='message error';
+    msg.textContent='Cloudflare migration failed: '+error.message;
+  }finally{button.disabled=false}
 }
 function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
 function runDailyProcess(){
