@@ -221,7 +221,7 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
       </div>
       <div class="results-actions">
         <button class="btn" id="csvBtn" disabled onclick="downloadResultsCSV()">Download final upload CSV</button>
-        <button class="btn" id="excelBtn" disabled onclick="downloadResultsCSV()">Download all results Excel</button>
+        <button class="btn" id="excelBtn" disabled onclick="downloadAllResultsExcel()">Download all results Excel</button>
       </div>
     </div>
     <div class="tabs">
@@ -739,7 +739,7 @@ async function runDailyProcess(){
       document.getElementById(id).textContent=(grouped[key]||[]).length.toLocaleString('en-IN');
     });
     document.getElementById('csvBtn').disabled=!grouped.final.length;
-    document.getElementById('excelBtn').disabled=!grouped.final.length;
+    document.getElementById('excelBtn').disabled=!Object.values(grouped).some(rows=>rows.length);
     renderResults(document.querySelector('.tab.active')?.getAttribute('onclick')?.match(/'([^']+)'\)\s*$/)?.[1]||'final');
     await saveDailyPriceSnapshot();
     msg.className='message ok';
@@ -769,6 +769,17 @@ function downloadResultsCSV(){
   const headers=['sku','qty','lead_time_to_ship','sale_price','mrp','min','max','b2b_price'];
   const lines=[headers.join(',')].concat(results.final.map(row=>headers.map(header=>csvCell(row[header])).join(',')));
   downloadFile('PriceFlow_Final_Upload.csv','text/csv;charset=utf-8',lines.join('\n'));
+}
+function downloadAllResultsExcel(){
+  if(!window.XLSX){alert('Excel export is unavailable. Refresh the page and try again.');return}
+  const sheets=[
+    ['Final Upload','final'],['Local Shops','shops'],['FBA Removed','fba'],['Skipped 48h','skip'],
+    ['Un Run ASINs','unrun'],['Inactive','inactive'],['Backend Data','backend'],['Price Alerts','alerts']
+  ].filter(([,key])=>results[key]?.length);
+  if(!sheets.length){alert('No results are available to export yet.');return}
+  const workbook=XLSX.utils.book_new();
+  sheets.forEach(([name,key])=>XLSX.utils.book_append_sheet(workbook,XLSX.utils.json_to_sheet(results[key]),name));
+  XLSX.writeFile(workbook,'PriceFlow_All_Results.xlsx');
 }
 function downloadFile(name,type,text){
   const blob=new Blob([text],{type});const a=document.createElement('a');
