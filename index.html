@@ -67,6 +67,11 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
 .message{margin-top:12px;font-size:12px;color:var(--muted)}
 .message.error{color:var(--danger)}
 .message.ok{color:var(--green);font-weight:700}
+.price-history-actions{display:flex;gap:9px;flex-wrap:wrap}
+.price-history-filters{display:flex;gap:14px;flex-wrap:wrap;margin-top:16px}
+.price-history-filters label{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--muted)}
+.price-history-filters input,.price-history-filters select{border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);background:#fff;font:inherit}
+.history-table-caption{padding:10px 14px;font-size:12px;color:var(--muted)}
 .hidden{display:none!important}
 @media(max-width:900px){
  .upload-grid,.stats{grid-template-columns:1fr}
@@ -122,7 +127,7 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
           <div class="upload-title">Daily price data</div>
           <div class="filetypes">.csv</div>
           <div class="file-name" id="priceName">Choose file</div>
-          <input type="file" accept=".csv" onchange="setFileName(this,'priceName')">
+          <input id="priceFile" type="file" accept=".csv" onchange="setFileName(this,'priceName')">
         </label>
         <label class="upload-box">
           <div class="step">3</div>
@@ -133,6 +138,41 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
         </label>
       </div>
       <div id="processMessage" class="message">Choose the files for today.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Daily Price History</div>
+        <div class="card-sub">Save each ASIN's source price by date. Mondays are marked as full snapshots; other days show price differences.</div>
+      </div>
+      <div class="price-history-actions">
+        <button class="btn primary" id="savePriceHistory" onclick="saveDailyPriceSnapshot()">Save today's prices</button>
+        <button class="btn" onclick="downloadPriceHistory()">Download for Google Sheets</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="backend-summary">
+        <div class="backend-count" id="priceHistoryCount">0</div>
+        <div>
+          <div style="font-weight:800;font-size:13px">ASIN-day price records</div>
+          <div class="backend-label" id="priceHistoryUpdated">No price snapshots saved yet.</div>
+        </div>
+      </div>
+      <div id="priceHistoryMessage" class="message">Select the daily price CSV above to record today's snapshot.</div>
+      <div class="price-history-filters">
+        <label>ASIN <input id="priceHistoryAsinFilter" type="search" placeholder="Search ASIN"></label>
+        <label>Date <select id="priceHistoryDateFilter"><option value="">All dates</option></select></label>
+      </div>
+      <div id="priceHistoryEmpty" class="empty">No saved price history yet.</div>
+      <div class="table-wrap">
+        <table id="priceHistoryTable" class="hidden">
+          <thead><tr><th>Date</th><th>ASIN</th><th>SKU</th><th>Price</th><th>Previous Price</th><th>Difference</th><th>Status</th><th>Snapshot</th></tr></thead>
+          <tbody id="priceHistoryBody"></tbody>
+        </table>
+      </div>
+      <div id="priceHistoryTableCaption" class="history-table-caption"></div>
     </div>
   </section>
 
@@ -206,18 +246,21 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
 <script>
 const BACKEND_KEY='priceflow_backend_v1';
 const DB_NAME='PriceFlowDB';
-const DB_VERSION=1;
+const DB_VERSION=2;
 const STORE_NAME='backend';
+const PRICE_HISTORY_STORE='priceHistory';
 let backendData=[];
 let backendCount=0;
 let results=[];
 let dbPromise=null;
+let priceHistorySharedAvailable=false;
+let priceHistorySnapshots=[];
 
 function openDB(){
   if(dbPromise)return dbPromise;
   dbPromise=new Promise((resolve,reject)=>{
     const req=indexedDB.open(DB_NAME,DB_VERSION);
-    req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_NAME))db.createObjectStore(STORE_NAME,{keyPath:'ASIN'});};
+    req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_NAME))db.createObjectStore(STORE_NAME,{keyPath:'ASIN'});if(!db.objectStoreNames.contains(PRICE_HISTORY_STORE))db.createObjectStore(PRICE_HISTORY_STORE,{keyPath:'date'});};
     req.onsuccess=()=>resolve(req.result);
     req.onerror=()=>reject(req.error);
   });
@@ -244,6 +287,20 @@ async function clearBackendDB(){
   const db=await openDB();
   await new Promise((resolve,reject)=>{
     const tx=db.transaction(STORE_NAME,'readwrite');tx.objectStore(STORE_NAME).clear();
+    tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+  });
+}
+async function readPriceHistoryDB(){
+  const db=await openDB();
+  return await new Promise((resolve,reject)=>{
+    const tx=db.transaction(PRICE_HISTORY_STORE,'readonly'),req=tx.objectStore(PRICE_HISTORY_STORE).getAll();
+    req.onsuccess=()=>resolve(req.result||[]);req.onerror=()=>reject(req.error);
+  });
+}
+async function savePriceHistoryDB(snapshot){
+  const db=await openDB();
+  await new Promise((resolve,reject)=>{
+    const tx=db.transaction(PRICE_HISTORY_STORE,'readwrite');tx.objectStore(PRICE_HISTORY_STORE).put(snapshot);
     tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
   });
 }
@@ -281,7 +338,7 @@ function updateBackendUI(){
 }
 function normalizeRow(row){
   const out={};
-  Object.keys(row).forEach(k=>out[String(k).trim().toUpperCase()]=row[k]);
+  Object.keys(row).forEach(k=>out[String(k).replace(/^\uFEFF/,'').trim().toUpperCase()]=row[k]);
   return out;
 }
 function parseCSV(text){
@@ -371,19 +428,139 @@ async function migrateLocalBackend(){
     msg.textContent='Cloudflare migration failed: '+error.message;
   }finally{button.disabled=false}
 }
+function localDate(date=new Date()){
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+}
+async function readPriceSnapshots(){
+  const local=await readPriceHistoryDB();
+  if(!window.priceflowStorage?.configured()){priceHistorySharedAvailable=false;return local}
+  try{
+    const remote=await window.priceflowStorage.getPriceHistory();
+    const byDate=new Map(remote.map(snapshot=>[snapshot.date,snapshot]));
+    local.forEach(snapshot=>{
+      const remoteSnapshot=byDate.get(snapshot.date);
+      if(!remoteSnapshot||(snapshot.savedAt&&(!remoteSnapshot.savedAt||snapshot.savedAt>remoteSnapshot.savedAt)))byDate.set(snapshot.date,snapshot);
+    });
+    priceHistorySharedAvailable=local.every(snapshot=>{
+      const remoteSnapshot=remote.find(item=>item.date===snapshot.date);
+      return remoteSnapshot&&(!snapshot.savedAt||(remoteSnapshot.savedAt&&remoteSnapshot.savedAt>=snapshot.savedAt));
+    });
+    return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date));
+  }catch(error){priceHistorySharedAvailable=false;console.warn('Could not read shared price history:',error);return local}
+}
+async function refreshPriceHistory(){
+  const snapshots=await readPriceSnapshots();
+  priceHistorySnapshots=snapshots;
+  const count=snapshots.reduce((total,snapshot)=>total+snapshot.rows.length,0);
+  document.getElementById('priceHistoryCount').textContent=count.toLocaleString('en-IN');
+  document.getElementById('priceHistoryUpdated').textContent=snapshots.length
+    ? `Latest snapshot ${snapshots[snapshots.length-1].date}`
+    : 'No price snapshots saved yet.';
+  if(count)document.getElementById('priceHistoryMessage').textContent=priceHistorySharedAvailable
+    ? 'Price history is backed up in shared Cloudflare storage and can be downloaded as a Google Sheets-ready CSV.'
+    : 'Price history is saved in this browser and can be downloaded as a Google Sheets-ready CSV.';
+  const dateFilter=document.getElementById('priceHistoryDateFilter');
+  const selectedDate=dateFilter.value;
+  const dates=[...new Set(snapshots.map(snapshot=>snapshot.date))].sort((a,b)=>b.localeCompare(a));
+  dateFilter.innerHTML='<option value="">All dates</option>'+dates.map(date=>`<option value="${esc(date)}">${esc(date)}</option>`).join('');
+  dateFilter.value=dates.includes(selectedDate)?selectedDate:(dates[0]||'');
+  renderPriceHistoryTable();
+  return snapshots;
+}
+function renderPriceHistoryTable(){
+  const query=document.getElementById('priceHistoryAsinFilter').value.trim().toUpperCase();
+  const selectedDate=document.getElementById('priceHistoryDateFilter').value;
+  const rows=priceHistorySnapshots.flatMap(snapshot=>snapshot.rows)
+    .filter(row=>(!query||row.ASIN.includes(query))&&(!selectedDate||row.DATE===selectedDate))
+    .sort((a,b)=>b.DATE.localeCompare(a.DATE)||a.ASIN.localeCompare(b.ASIN));
+  const visible=rows.slice(0,500);
+  const empty=document.getElementById('priceHistoryEmpty'),table=document.getElementById('priceHistoryTable');
+  empty.classList.toggle('hidden',visible.length>0);
+  empty.textContent=priceHistorySnapshots.length?'No records match these filters.':'No saved price history yet.';
+  table.classList.toggle('hidden',visible.length===0);
+  document.getElementById('priceHistoryBody').innerHTML=visible.map(row=>`<tr><td>${esc(row.DATE)}</td><td>${esc(row.ASIN)}</td><td>${esc(row.SKU)}</td><td>${esc(row.PRICE)}</td><td>${esc(row.PREVIOUS_PRICE)}</td><td>${esc(row.PRICE_DIFFERENCE)}</td><td>${esc(row.STATUS)}</td><td>${esc(row.SNAPSHOT_TYPE)}</td></tr>`).join('');
+  document.getElementById('priceHistoryTableCaption').textContent=rows.length>visible.length
+    ? `Showing ${visible.length.toLocaleString('en-IN')} of ${rows.length.toLocaleString('en-IN')} matching records. Download the CSV for the complete history.`
+    : `${rows.length.toLocaleString('en-IN')} matching records.`;
+}
+function getPriceFromRow(row){
+  const raw=[row['US PRICE'],row.US_PRICE,row['PRICE USD'],row['PRICE (USD)'],row['NEW PRICE'],row.NEW_PRICE,row['AMAZON PRICE'],row.AMAZON_PRICE,row.PRICE]
+    .find(value=>value!==undefined&&value!==null&&String(value).trim()!=='');
+  if(raw===undefined)return null;
+  const normalized=String(raw).replace(/,/g,'').replace(/[^0-9.-]/g,'');
+  if(!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized))return null;
+  const value=Number(normalized);
+  return Number.isFinite(value)&&value>=0?value:null;
+}
+async function saveDailyPriceSnapshot(){
+  const input=document.getElementById('priceFile'),button=document.getElementById('savePriceHistory');
+  const msg=document.getElementById('priceHistoryMessage');
+  const file=input.files?.[0];
+  if(!file){msg.className='message error';msg.textContent='Choose the daily price CSV above first.';return}
+  button.disabled=true;msg.className='message';msg.textContent='Reading prices and comparing with the latest saved snapshot...';
+  let savedLocally=false;
+  try{
+    const imported=parseCSV(await file.text()),byAsin=new Map();
+    imported.forEach(row=>{
+      const asin=String(row.ASIN||row.ASIN1||row['PRODUCT ID']||'').trim().toUpperCase();
+      const price=getPriceFromRow(row);
+      if(asin&&price!==null)byAsin.set(asin,{ASIN:asin,SKU:String(row.SKU||row['SELLER-SKU']||'').trim(),PRICE:price});
+    });
+    if(!byAsin.size)throw new Error('No rows with both an ASIN and a valid price were found.');
+    const date=localDate(),snapshots=await readPriceSnapshots(),previousByAsin=new Map();
+    snapshots.filter(snapshot=>snapshot.date<date).sort((a,b)=>a.date.localeCompare(b.date)).forEach(snapshot=>{
+      snapshot.rows.forEach(row=>previousByAsin.set(row.ASIN,row));
+    });
+    const monday=new Date(`${date}T00:00:00`).getDay()===1;
+    const rows=[...byAsin.values()].map(current=>{
+      const previous=previousByAsin.get(current.ASIN),difference=previous===undefined?'':Number((current.PRICE-Number(previous.PRICE)).toFixed(2));
+      return {
+        DATE:date,ASIN:current.ASIN,SKU:current.SKU,PRICE:current.PRICE,
+        PREVIOUS_SNAPSHOT_DATE:previous?.DATE||'',PREVIOUS_PRICE:previous?.PRICE??'',PRICE_DIFFERENCE:difference,
+        STATUS:!previous?'New ASIN':difference>0?'Increase':difference<0?'Decrease':'No change',
+        SNAPSHOT_TYPE:monday?'Monday full snapshot':'Daily difference'
+      };
+    });
+    const snapshot={date,savedAt:new Date().toISOString(),rows};
+    await savePriceHistoryDB(snapshot);savedLocally=true;
+    if(window.priceflowStorage?.configured()){
+      await window.priceflowStorage.savePriceHistory(snapshot);
+      priceHistorySharedAvailable=true;
+    }
+    const newCount=rows.filter(row=>row.STATUS==='New ASIN').length;
+    const changedCount=rows.filter(row=>row.STATUS==='Increase'||row.STATUS==='Decrease').length;
+    await refreshPriceHistory();
+    msg.className='message ok';
+    msg.textContent=`Saved ${rows.length.toLocaleString('en-IN')} ASIN prices for ${date}: ${newCount} new, ${changedCount} changed. ${monday?'Monday full snapshot.':'Daily differences recorded.'}${window.priceflowStorage?.configured()?' Shared storage synced.':' Saved in this browser.'}`;
+  }catch(error){
+    if(savedLocally)await refreshPriceHistory().catch(()=>{});
+    msg.className='message error';
+    msg.textContent=`Price history ${savedLocally?'saved in this browser, but shared sync failed':'save failed'}: ${error.message}`;
+  }finally{button.disabled=false}
+}
+async function downloadPriceHistory(){
+  try{
+    const snapshots=await readPriceSnapshots(),rows=snapshots.flatMap(snapshot=>snapshot.rows).sort((a,b)=>a.DATE.localeCompare(b.DATE)||a.ASIN.localeCompare(b.ASIN));
+    if(!rows.length){document.getElementById('priceHistoryMessage').textContent='No price history is available to download yet.';return}
+    const headers=['DATE','ASIN','SKU','PRICE','PREVIOUS_SNAPSHOT_DATE','PREVIOUS_PRICE','PRICE_DIFFERENCE','STATUS','SNAPSHOT_TYPE'];
+    const lines=[headers.join(',')].concat(rows.map(row=>headers.map(header=>csvCell(row[header])).join(',')));
+    downloadFile('PriceFlow_Daily_Price_History.csv','text/csv;charset=utf-8',lines.join('\n'));
+  }catch(error){document.getElementById('priceHistoryMessage').textContent='Price history download failed: '+error.message}
+}
 function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
 function runDailyProcess(){
   const msg=document.getElementById('processMessage');
   msg.className='message';
   msg.textContent='Daily process started. Existing pricing rules are unchanged.';
   document.getElementById('runBtn').disabled=true;
-  setTimeout(()=>{
+  setTimeout(async()=>{
     const n=backendCount;
     document.getElementById('listingsCount').textContent='—';
     document.getElementById('finalCount').textContent='—';
     document.getElementById('alertsCount').textContent='0';
     document.getElementById('nFinal').textContent='0';
     document.getElementById('nAlerts').textContent='0';
+    if(document.getElementById('priceFile').files?.[0])await saveDailyPriceSnapshot();
     msg.className='message ok';
     msg.textContent=`Process ready. Backend database contains ${n.toLocaleString('en-IN')} ASINs. Upload daily files to process listings.`;
     document.getElementById('runBtn').disabled=false;
@@ -411,6 +588,9 @@ function downloadFile(name,type,text){
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 loadBackend();
+document.getElementById('priceHistoryAsinFilter').addEventListener('input',renderPriceHistoryTable);
+document.getElementById('priceHistoryDateFilter').addEventListener('change',renderPriceHistoryTable);
+refreshPriceHistory().catch(error=>console.warn('Could not load price history:',error));
 </script>
 </body>
 </html>
