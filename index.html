@@ -72,6 +72,9 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
 .price-history-filters label{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--muted)}
 .price-history-filters input,.price-history-filters select{border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);background:#fff;font:inherit}
 .history-table-caption{padding:10px 14px;font-size:12px;color:var(--muted)}
+.history-heavy-drop td{background:#fff0f0;color:#8f2020;font-weight:700}
+.history-heavy-drop td:first-child{border-left:4px solid var(--danger)}
+.history-drop-flag{display:inline-block;margin-right:6px;padding:3px 6px;border-radius:4px;background:var(--danger);color:#fff;font-size:10px;font-weight:800}
 .hidden{display:none!important}
 @media(max-width:900px){
  .upload-grid,.stats{grid-template-columns:1fr}
@@ -145,7 +148,7 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
     <div class="card-head">
       <div>
         <div class="card-title">Daily Price History</div>
-        <div class="card-sub">Save each ASIN's source price by date. Mondays are marked as full snapshots; other days show price differences.</div>
+        <div class="card-sub">Save each ASIN's source price by date. Mondays are full snapshots; drops of ₹500 or 10% are highlighted.</div>
       </div>
       <div class="price-history-actions">
         <button class="btn primary" id="savePriceHistory" onclick="saveDailyPriceSnapshot()">Save today's prices</button>
@@ -372,24 +375,31 @@ async function importBackend(input){
       localStorage.setItem(BACKEND_KEY+'_date',new Date().toLocaleString('en-IN'));
       updateBackendUI();
       msg.className='message ok';
-      msg.textContent=`Backend database saved successfully: ${backendCount.toLocaleString('en-IN')} unique ASINs. Stored in the configured storage API.`;
+      msg.textContent=`Backend updated: ${Number(result.updatedAsins)||0} ASINs replaced, ${Number(result.newAsins)||0} added. ${backendCount.toLocaleString('en-IN')} unique ASINs stored in the configured storage API.`;
       return;
     }
     const text=await file.text();
     let rows=parseCSV(text);
     if(!rows.length) throw new Error('No readable rows found. For Excel files, export the backend file as CSV and upload it.');
-    const map=new Map();
+    const map=new Map(backendData.map(row=>[String(row.ASIN||'').trim().toUpperCase(),row]).filter(([asin])=>asin));
+    const existingAsins=new Set(map.keys());
+    const uploadedAsins=new Set();
     rows.forEach(r=>{
       const asin=String(r.ASIN||r['ASIN1']||r['PRODUCT ID']||'').trim().toUpperCase();
-      if(asin) map.set(asin,{ASIN:asin,SKU:r.SKU||'',WEIGHT:r.WEIGHT||r['ITEM WEIGHT']||'',REFERRAL_FEE:r.REFERRAL_FEE||r['REF FEE']||r['REFERRAL FEE']||''});
+      if(asin){
+        uploadedAsins.add(asin);
+        map.set(asin,{ASIN:asin,SKU:r.SKU||'',WEIGHT:r.WEIGHT||r['ITEM WEIGHT']||'',REFERRAL_FEE:r.REFERRAL_FEE||r['REF FEE']||r['REFERRAL FEE']||''});
+      }
     });
     backendData=[...map.values()];
     backendCount=backendData.length;
+    const newAsins=[...uploadedAsins].filter(asin=>!existingAsins.has(asin)).length;
+    const updatedAsins=uploadedAsins.size-newAsins;
     await saveBackendDB(backendData);
     localStorage.setItem(BACKEND_KEY+'_date',new Date().toLocaleString('en-IN'));
     updateBackendUI();
     msg.className='message ok';
-    msg.textContent=`Backend database saved successfully: ${backendData.length.toLocaleString('en-IN')} unique ASINs. Stored in IndexedDB (large-file storage).`;
+    msg.textContent=`Backend updated: ${updatedAsins.toLocaleString('en-IN')} ASINs replaced, ${newAsins.toLocaleString('en-IN')} added. ${backendData.length.toLocaleString('en-IN')} unique ASINs stored in IndexedDB.`;
   }catch(e){
     msg.className='message error';msg.textContent='Backend import failed: '+e.message;
   }finally{input.value=''}
@@ -467,6 +477,10 @@ async function refreshPriceHistory(){
   renderPriceHistoryTable();
   return snapshots;
 }
+function isHeavyPriceDrop(row){
+  const difference=Number(row.PRICE_DIFFERENCE),previous=Number(row.PREVIOUS_PRICE);
+  return difference<0&&(Math.abs(difference)>=500||(previous>0&&Math.abs(difference)/previous>=0.10));
+}
 function renderPriceHistoryTable(){
   const query=document.getElementById('priceHistoryAsinFilter').value.trim().toUpperCase();
   const selectedDate=document.getElementById('priceHistoryDateFilter').value;
@@ -478,7 +492,10 @@ function renderPriceHistoryTable(){
   empty.classList.toggle('hidden',visible.length>0);
   empty.textContent=priceHistorySnapshots.length?'No records match these filters.':'No saved price history yet.';
   table.classList.toggle('hidden',visible.length===0);
-  document.getElementById('priceHistoryBody').innerHTML=visible.map(row=>`<tr><td>${esc(row.DATE)}</td><td>${esc(row.ASIN)}</td><td>${esc(row.SKU)}</td><td>${esc(row.PRICE)}</td><td>${esc(row.PREVIOUS_PRICE)}</td><td>${esc(row.PRICE_DIFFERENCE)}</td><td>${esc(row.STATUS)}</td><td>${esc(row.SNAPSHOT_TYPE)}</td></tr>`).join('');
+  document.getElementById('priceHistoryBody').innerHTML=visible.map(row=>{
+    const heavyDrop=isHeavyPriceDrop(row);
+    return `<tr class="${heavyDrop?'history-heavy-drop':''}"><td>${esc(row.DATE)}</td><td>${esc(row.ASIN)}</td><td>${esc(row.SKU)}</td><td>${esc(row.PRICE)}</td><td>${esc(row.PREVIOUS_PRICE)}</td><td>${esc(row.PRICE_DIFFERENCE)}</td><td>${heavyDrop?'<span class="history-drop-flag">HEAVY DROP</span>':''}${esc(row.STATUS)}</td><td>${esc(row.SNAPSHOT_TYPE)}</td></tr>`;
+  }).join('');
   document.getElementById('priceHistoryTableCaption').textContent=rows.length>visible.length
     ? `Showing ${visible.length.toLocaleString('en-IN')} of ${rows.length.toLocaleString('en-IN')} matching records. Download the CSV for the complete history.`
     : `${rows.length.toLocaleString('en-IN')} matching records.`;
