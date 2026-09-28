@@ -47,7 +47,22 @@
     },
     async downloadBackend() {
       const response = await request('/backend/export');
-      return response.blob();
+      const text = await response.text();
+      // Repair files uploaded by the older exporter that stored literal "\\n" text.
+      return new Blob([text.replaceAll('\\\\n', '\n')], { type: 'text/csv;charset=utf-8' });
+    },
+    async getPriceHistory() {
+      const response = await request('/price-history');
+      const data = await response.json();
+      return Array.isArray(data.snapshots) ? data.snapshots : [];
+    },
+    async savePriceHistory(snapshot) {
+      const response = await request('/price-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot)
+      });
+      return response.json();
     }
   };
 })();
