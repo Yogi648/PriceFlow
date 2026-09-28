@@ -250,9 +250,10 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
 <script>
 const BACKEND_KEY='priceflow_backend_v1';
 const DB_NAME='PriceFlowDB';
-const DB_VERSION=2;
+const DB_VERSION=3;
 const STORE_NAME='backend';
 const PRICE_HISTORY_STORE='priceHistory';
+const RESULTS_STORE='results';
 let backendData=[];
 let backendCount=0;
 let results={};
@@ -264,7 +265,7 @@ function openDB(){
   if(dbPromise)return dbPromise;
   dbPromise=new Promise((resolve,reject)=>{
     const req=indexedDB.open(DB_NAME,DB_VERSION);
-    req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_NAME))db.createObjectStore(STORE_NAME,{keyPath:'ASIN'});if(!db.objectStoreNames.contains(PRICE_HISTORY_STORE))db.createObjectStore(PRICE_HISTORY_STORE,{keyPath:'date'});};
+    req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_NAME))db.createObjectStore(STORE_NAME,{keyPath:'ASIN'});if(!db.objectStoreNames.contains(PRICE_HISTORY_STORE))db.createObjectStore(PRICE_HISTORY_STORE,{keyPath:'date'});if(!db.objectStoreNames.contains(RESULTS_STORE))db.createObjectStore(RESULTS_STORE);};
     req.onsuccess=()=>resolve(req.result);
     req.onerror=()=>reject(req.error);
   });
@@ -306,6 +307,21 @@ async function savePriceHistoryDB(snapshot){
   await new Promise((resolve,reject)=>{
     const tx=db.transaction(PRICE_HISTORY_STORE,'readwrite');tx.objectStore(PRICE_HISTORY_STORE).put(snapshot);
     tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+  });
+}
+async function saveLastRun(run){
+  const db=await openDB();
+  await new Promise((resolve,reject)=>{
+    const tx=db.transaction(RESULTS_STORE,'readwrite');
+    tx.objectStore(RESULTS_STORE).put(run,'latest');
+    tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+  });
+}
+async function getLastRun(){
+  const db=await openDB();
+  return await new Promise((resolve,reject)=>{
+    const tx=db.transaction(RESULTS_STORE,'readonly'),request=tx.objectStore(RESULTS_STORE).get('latest');
+    request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error);
   });
 }
 
@@ -734,6 +750,7 @@ async function runDailyProcess(){
     });
 
     results=grouped;
+    await saveLastRun({results:grouped,listingsCount:listings.length,processedAt:new Date().toISOString()});
     document.getElementById('listingsCount').textContent=listings.length.toLocaleString('en-IN');
     document.getElementById('finalCount').textContent=grouped.final.length.toLocaleString('en-IN');
     document.getElementById('alertsCount').textContent=grouped.alerts.length.toLocaleString('en-IN');
@@ -788,7 +805,25 @@ function downloadFile(name,type,text){
   a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
+async function restoreLastRun(){
+  try{
+    const saved=await getLastRun();
+    if(!saved)return;
+    results=saved.results||{};
+    document.getElementById('listingsCount').textContent=Number(saved.listingsCount||0).toLocaleString('en-IN');
+    document.getElementById('finalCount').textContent=(results.final||[]).length.toLocaleString('en-IN');
+    document.getElementById('alertsCount').textContent=(results.alerts||[]).length.toLocaleString('en-IN');
+    Object.entries({final:'nFinal',shops:'nShops',fba:'nFba',skip:'nSkip',unrun:'nUnrun',inactive:'nInactive',backend:'nBackend',alerts:'nAlerts'}).forEach(([key,id])=>{
+      document.getElementById(id).textContent=(results[key]||[]).length.toLocaleString('en-IN');
+    });
+    document.getElementById('csvBtn').disabled=!(results.final||[]).length;
+    document.getElementById('excelBtn').disabled=!Object.values(results).some(rows=>Array.isArray(rows)&&rows.length);
+    renderResults('final');
+    document.getElementById('processMessage').textContent=`Restored results from ${new Date(saved.processedAt).toLocaleString('en-IN')}.`;
+  }catch(error){console.warn('Could not restore the previous daily results:',error)}
+}
 loadBackend();
+restoreLastRun();
 document.getElementById('priceHistoryAsinFilter').addEventListener('input',renderPriceHistoryTable);
 document.getElementById('priceHistoryDateFilter').addEventListener('change',renderPriceHistoryTable);
 refreshPriceHistory().catch(error=>console.warn('Could not load price history:',error));
