@@ -727,8 +727,8 @@ async function runDailyProcess(){
         if(Math.abs(change)>=500||percent>=0.10)grouped.alerts.push({ASIN:asin,SKU:listingSku,PREVIOUS_PRICE:Number(previous.PRICE).toFixed(2),NEW_PRICE:cost.toFixed(2),CHANGE:change.toFixed(2),CHANGE_PERCENT:(percent*100).toFixed(2)+'%',TYPE:change>=0?'Increase':'Decrease'});
       }
       grouped.final.push({
-        ASIN:asin,SKU:listingSku,STATUS:'Price updated',PRICE:sale.toFixed(2),WEIGHT:weight,REFERRAL_FEE:referralFee,
-        sku:listingSku,qty:field(listing,'QUANTITY','QTY'),lead_time_to_ship:'10',sale_price:sale.toFixed(2),
+        ASIN:asin,SKU:listingSku,STATUS:'Price updated',US_PRICE:cost.toFixed(2),PRICE:sale.toFixed(2),WEIGHT:weight,REFERRAL_FEE:referralFee,
+        sku:listingSku,qty:field(listing,'QUANTITY','QTY'),lead_time_to_ship:'10',us_price:cost.toFixed(2),sale_price:sale.toFixed(2),
         mrp:(sale*1.35).toFixed(2),min:min.toFixed(2),max:(sale*1.07).toFixed(2),b2b_price:''
       });
     });
@@ -768,7 +768,7 @@ function renderResults(name){
 }
 function downloadResultsCSV(){
   if(!results.final?.length){alert('No final upload rows are available yet.');return}
-  const headers=['sku','qty','lead_time_to_ship','sale_price','mrp','min','max','b2b_price'];
+  const headers=['sku','qty','lead_time_to_ship','us_price','sale_price','mrp','min','max','b2b_price'];
   const lines=[headers.join(',')].concat(results.final.map(row=>headers.map(header=>csvCell(row[header])).join(',')));
   downloadFile('PriceFlow_Final_Upload.csv','text/csv;charset=utf-8',lines.join('\n'));
 }
