@@ -1,4 +1,5 @@
 const BACKEND_KEY = 'backend.csv';
+const PRICE_HISTORY_PREFIX = 'price-history/';
 
 function corsHeaders(env) {
   return {
@@ -25,6 +26,7 @@ async function countCsvRows(stream) {
   let quoted = false;
   let rows = 0;
   let pendingQuote = false;
+  let lineHasContent = false;
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -37,11 +39,17 @@ async function countCsvRows(stream) {
           quoted = !quoted;
           pendingQuote = false;
         }
-        if (character === '\n' && !quoted) rows++;
+        if (character === '\n' && !quoted) {
+          rows += 1;
+          lineHasContent = false;
+        } else if (character !== '\r') {
+          lineHasContent = true;
+        }
       }
     }
   }
   if (pendingQuote) quoted = !quoted;
+  if (lineHasContent) rows += 1;
   return Math.max(0, rows - 1);
 }
 
@@ -79,6 +87,38 @@ export default {
       responseHeaders.set('Content-Type', object.httpMetadata?.contentType || 'text/csv');
       responseHeaders.set('Content-Disposition', 'attachment; filename="PriceFlow_Backend_Database.csv"');
       return new Response(object.body, { headers: responseHeaders });
+    }
+
+    if (url.pathname === '/price-history' && request.method === 'GET') {
+      const snapshots = [];
+      let cursor;
+      do {
+        const page = await env.BACKEND_BUCKET.list({ prefix: PRICE_HISTORY_PREFIX, cursor, limit: 1000 });
+        for (const entry of page.objects) {
+          const object = await env.BACKEND_BUCKET.get(entry.key);
+          if (object) snapshots.push(await object.json());
+        }
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+      snapshots.sort((a, b) => a.date.localeCompare(b.date));
+      return json({ snapshots }, 200, env);
+    }
+
+    if (url.pathname === '/price-history' && request.method === 'POST') {
+      let payload;
+      try { payload = await request.json(); }
+      catch { return json({ error: 'A JSON snapshot is required' }, 400, env); }
+      const date = String(payload?.date || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Array.isArray(payload?.rows)) {
+        return json({ error: 'Snapshot date and rows are required' }, 400, env);
+      }
+      const rows = payload.rows.filter(row => row && String(row.ASIN || '').trim() && row.PRICE !== '' && row.PRICE !== null && row.PRICE !== undefined && Number.isFinite(Number(row.PRICE)));
+      if (!rows.length) return json({ error: 'Snapshot contains no valid ASIN prices' }, 400, env);
+      const snapshot = { date, rows };
+      await env.BACKEND_BUCKET.put(`${PRICE_HISTORY_PREFIX}${date}.json`, JSON.stringify(snapshot), {
+        httpMetadata: { contentType: 'application/json' }
+      });
+      return json({ date, count: rows.length }, 200, env);
     }
 
     return json({ error: 'Not found' }, 404, env);
