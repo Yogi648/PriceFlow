@@ -123,7 +123,7 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
           <div class="upload-title">Amazon All Listings</div>
           <div class="filetypes">.xlsx / .xls / .txt / .tsv / .csv</div>
           <div class="file-name" id="listingName">Choose file</div>
-          <input type="file" accept=".xlsx,.xls,.txt,.tsv,.csv" onchange="setFileName(this,'listingName')">
+          <input id="listingsFile" type="file" accept=".xlsx,.xls,.txt,.tsv,.csv" onchange="setFileName(this,'listingName')">
         </label>
         <label class="upload-box">
           <div class="step">2</div>
@@ -137,7 +137,7 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
           <div class="upload-title">Warehouse stock</div>
           <div class="filetypes">.xlsx / .csv</div>
           <div class="file-name" id="stockName">Choose file</div>
-          <input type="file" accept=".xlsx,.xls,.csv" onchange="setFileName(this,'stockName')">
+          <input id="warehouseFile" type="file" accept=".xlsx,.xls,.csv" onchange="setFileName(this,'stockName')">
         </label>
       </div>
       <div id="processMessage" class="message">Choose the files for today.</div>
@@ -244,6 +244,7 @@ th{background:#f8fafc;color:#526b85;font-size:11px;text-transform:uppercase;lett
   </section>
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="storage-config.js"></script>
 <script src="storage-adapter.js"></script>
 <script>
@@ -254,7 +255,7 @@ const STORE_NAME='backend';
 const PRICE_HISTORY_STORE='priceHistory';
 let backendData=[];
 let backendCount=0;
-let results=[];
+let results={};
 let dbPromise=null;
 let priceHistorySharedAvailable=false;
 let priceHistorySnapshots=[];
@@ -319,6 +320,15 @@ async function loadBackend(){
     if(window.priceflowStorage?.configured()){
       backendCount=await window.priceflowStorage.getBackendCount();
       backendData=[];
+      const blob=await window.priceflowStorage.downloadBackend();
+      const rows=parseCSV(await blob.text());
+      const byAsin=new Map();
+      rows.forEach(row=>{
+        const asin=String(row.ASIN||row.ASIN1||row['PRODUCT ID']||'').trim().toUpperCase();
+        if(asin)byAsin.set(asin,{...row,ASIN:asin});
+      });
+      backendData=[...byAsin.values()];
+      backendCount=backendData.length;
     }else{
       backendData=await readBackendDB();
       backendCount=backendData.length;
@@ -362,6 +372,47 @@ function parseCSV(text){
   return rows.slice(1).map(r=>{
     const o={};headers.forEach((h,i)=>o[h]=r[i]??'');return normalizeRow(o)
   });
+}
+async function readDailyFile(file){
+  const extension=file.name.split('.').pop().toLowerCase();
+  if(extension==='xlsx'||extension==='xls'){
+    if(!window.XLSX)throw new Error('Excel support did not load. Refresh the page or export this file as CSV.');
+    const workbook=XLSX.read(await file.arrayBuffer(),{type:'array'});
+    const sheet=workbook.Sheets[workbook.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(sheet,{defval:'',raw:false}).map(normalizeRow);
+  }
+  return parseCSV(await file.text());
+}
+function field(row,...names){
+  for(const name of names){
+    const value=row[name]??row[name.toUpperCase()];
+    if(value!==undefined&&value!==null&&String(value).trim()!=='')return value;
+  }
+  return '';
+}
+function numberValue(value){
+  const normalized=String(value??'').replace(/[^0-9.-]/g,'');
+  if(!normalized)return null;
+  const parsed=Number(normalized);
+  return Number.isFinite(parsed)?parsed:null;
+}
+function parseUpdateDate(value){
+  const text=String(value??'').trim();
+  if(!text)return null;
+  const match=text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if(match){
+    const first=+match[1],second=+match[2];
+    const day=first>12?first:(second>12?second:first);
+    const month=first>12?second:(second>12?first:second);
+    const date=new Date(+match[3],month-1,day,+(match[4]||0),+(match[5]||0),+(match[6]||0));
+    return date.getFullYear()===+match[3]&&date.getMonth()===month-1&&date.getDate()===day?date:null;
+  }
+  const date=new Date(text);
+  return Number.isNaN(date.getTime())?null:date;
+}
+function csvText(headers,rows){
+  const cell=value=>{const text=String(value??'');return /[",\r\n]/.test(text)?`"${text.replaceAll('"','""')}"`:text};
+  return [headers,...rows.map(row=>headers.map(header=>row[header]))].map(row=>row.map(cell).join(',')).join('\r\n');
 }
 async function importBackend(input){
   const file=input.files?.[0]; if(!file)return;
@@ -565,23 +616,139 @@ async function downloadPriceHistory(){
   }catch(error){document.getElementById('priceHistoryMessage').textContent='Price history download failed: '+error.message}
 }
 function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
-function runDailyProcess(){
+async function runDailyProcess(){
   const msg=document.getElementById('processMessage');
+  const button=document.getElementById('runBtn');
+  const listingFile=document.getElementById('listingsFile').files?.[0];
+  const priceFile=document.getElementById('priceFile').files?.[0];
+  const warehouseFile=document.getElementById('warehouseFile').files?.[0];
+  if(!listingFile||!priceFile||!warehouseFile){
+    msg.className='message error';
+    msg.textContent='Choose the Amazon listings, daily price, and warehouse files before running.';
+    return;
+  }
+  button.disabled=true;
   msg.className='message';
-  msg.textContent='Daily process started. Existing pricing rules are unchanged.';
-  document.getElementById('runBtn').disabled=true;
-  setTimeout(async()=>{
-    const n=backendCount;
-    document.getElementById('listingsCount').textContent='—';
-    document.getElementById('finalCount').textContent='—';
-    document.getElementById('alertsCount').textContent='0';
-    document.getElementById('nFinal').textContent='0';
-    document.getElementById('nAlerts').textContent='0';
-    if(document.getElementById('priceFile').files?.[0])await saveDailyPriceSnapshot();
+  msg.textContent='Reading files and processing ASINs...';
+  try{
+    if(!backendData.length)await loadBackend();
+    const [listings,pricing,warehouse]=await Promise.all([
+      readDailyFile(listingFile),readDailyFile(priceFile),readDailyFile(warehouseFile)
+    ]);
+    if(!listings.length||!pricing.length||!warehouse.length)throw new Error('One or more selected files contain no readable data rows.');
+
+    const fbaByAsin=new Map(),nonFbaByAsin=new Map(),warehouseByAsin=new Map();
+    listings.forEach(row=>{
+      const asin=String(field(row,'ASIN1','ASIN')||'').trim().toUpperCase();
+      if(!asin)return;
+      const channel=String(field(row,'FULFILLMENT-CHANNEL','FULFILLMENT CHANNEL')||'').trim().toUpperCase();
+      if(channel==='AMAZON_IN'){if(!fbaByAsin.has(asin))fbaByAsin.set(asin,row)}
+      else if(!nonFbaByAsin.has(asin))nonFbaByAsin.set(asin,row);
+    });
+    warehouse.forEach(row=>{
+      const asin=String(field(row,'ASIN','ASIN1')||'').trim().toUpperCase();
+      const qty=numberValue(field(row,'QTY','QUANTITY'));
+      if(asin&&qty!==null&&qty>0)warehouseByAsin.set(asin,{...row,_ASIN:asin,_QTY:qty});
+    });
+
+    const backendByAsin=new Map();
+    backendData.forEach(row=>{
+      const asin=String(field(row,'ASIN','ASIN1','PRODUCT ID')||'').trim().toUpperCase();
+      if(asin)backendByAsin.set(asin,row);
+    });
+    const grouped={final:[],shops:[],fba:[],skip:[],unrun:[],inactive:[],backend:backendData,alerts:[]};
+    let previousPrices=new Map();
+    try{
+      const snapshots=await readPriceSnapshots();
+      snapshots.filter(snapshot=>snapshot.date<localDate()).sort((a,b)=>a.date.localeCompare(b.date)).forEach(snapshot=>{
+        (snapshot.rows||[]).forEach(row=>previousPrices.set(String(row.ASIN||'').toUpperCase(),row));
+      });
+    }catch(error){console.warn('Price history could not be loaded for alerts:',error)}
+
+    pricing.forEach(row=>{
+      const asin=String(field(row,'ASIN','ASIN1','PRODUCT ID')||'').trim().toUpperCase();
+      if(!asin)return;
+      const sku=String(field(row,'SKU','SELLER-SKU','SELLER SKU')||'').trim();
+      const listing=nonFbaByAsin.get(asin)||{};
+      const listingSku=String(field(listing,'SELLER-SKU','SKU')||sku).trim();
+      const status=String(field(row,'STATUS','LISTING STATUS','ACTIVE STATUS')||'').trim();
+      if(/^(none|no data|error|not available)$/i.test(status)){
+        grouped.inactive.push({ASIN:asin,SKU:listingSku,STATUS:status,REASON:'Inactive status in price data'});
+        return;
+      }
+      if(fbaByAsin.has(asin)){
+        grouped.fba.push({ASIN:asin,SKU:String(field(fbaByAsin.get(asin),'SELLER-SKU','SKU')||sku),REASON:'Matched FBA listing'});
+        return;
+      }
+      if(warehouseByAsin.has(asin)){
+        const stock=warehouseByAsin.get(asin);
+        grouped.shops.push({ASIN:asin,SKU:String(field(stock,'SKU','SELLER-SKU')||listingSku),QTY:stock._QTY,REASON:'Warehouse stock > 0'});
+        return;
+      }
+
+      const lastUpdate=field(row,'LAST UPDATE','LASTUPDATE','UPDATED AT','LAST_UPDATE');
+      const updated=parseUpdateDate(lastUpdate);
+      if(!updated){
+        grouped.inactive.push({ASIN:asin,SKU:listingSku,STATUS:'Inactive',REASON:'Last Update is missing or invalid'});
+        return;
+      }
+      const ageHours=(Date.now()-updated.getTime())/3600000;
+      if(ageHours>=48){
+        grouped.skip.push({ASIN:asin,SKU:listingSku,LAST_UPDATE:lastUpdate,AGE_HOURS:ageHours.toFixed(1),REASON:'Last Update is 48 hours old or older'});
+        return;
+      }
+
+      const rawPrice=field(row,'NEW PRICE','NEW_PRICE','US PRICE','US_PRICE','PRICE USD','PRICE');
+      const cost=numberValue(rawPrice);
+      if(cost===null){
+        grouped.unrun.push({ASIN:asin,SKU:listingSku,REASON:'No valid new price',NEW_PRICE:rawPrice});
+        return;
+      }
+      const backend=backendByAsin.get(asin);
+      const weight=numberValue(field(backend||{},'WEIGHT','ITEM WEIGHT'));
+      const referralFee=numberValue(field(backend||{},'REFERRAL_FEE','REF FEE','REF FEE %','REFERRAL FEE','REF_FEE'));
+      if(!backend||weight===null||referralFee===null){
+        grouped.unrun.push({ASIN:asin,SKU:listingSku,REASON:!backend?'ASIN missing from backend':'Weight or referral fee missing'});
+        return;
+      }
+
+      const title=String(field(listing,'ITEM-NAME','TITLE')||'');
+      const special=/ssd|solid state drive|nvme|m\.2|motherboard|mainboard|\bram\b|memory|ddr[345]|graphic card/i.test(title);
+      const rate=special?0.10:0.05;
+      const denominator=1/1.18-referralFee/100-rate;
+      if(denominator<=0){grouped.unrun.push({ASIN:asin,SKU:listingSku,REASON:'Pricing formula could not be calculated'});return}
+      const min=(150+Math.round(cost)*97*1.2+weight*5*97+weight*200)/denominator;
+      const sale=min*1.06;
+      const previous=previousPrices.get(asin);
+      if(previous&&Number.isFinite(Number(previous.PRICE))){
+        const change=cost-Number(previous.PRICE),percent=Number(previous.PRICE)?Math.abs(change)/Number(previous.PRICE):0;
+        if(Math.abs(change)>=500||percent>=0.10)grouped.alerts.push({ASIN:asin,SKU:listingSku,PREVIOUS_PRICE:Number(previous.PRICE).toFixed(2),NEW_PRICE:cost.toFixed(2),CHANGE:change.toFixed(2),CHANGE_PERCENT:(percent*100).toFixed(2)+'%',TYPE:change>=0?'Increase':'Decrease'});
+      }
+      grouped.final.push({
+        ASIN:asin,SKU:listingSku,STATUS:'Price updated',PRICE:sale.toFixed(2),WEIGHT:weight,REFERRAL_FEE:referralFee,
+        sku:listingSku,qty:field(listing,'QUANTITY','QTY'),lead_time_to_ship:'10',sale_price:sale.toFixed(2),
+        mrp:(sale*1.35).toFixed(2),min:min.toFixed(2),max:(sale*1.07).toFixed(2),b2b_price:''
+      });
+    });
+
+    results=grouped;
+    document.getElementById('listingsCount').textContent=listings.length.toLocaleString('en-IN');
+    document.getElementById('finalCount').textContent=grouped.final.length.toLocaleString('en-IN');
+    document.getElementById('alertsCount').textContent=grouped.alerts.length.toLocaleString('en-IN');
+    Object.entries({final:'nFinal',shops:'nShops',fba:'nFba',skip:'nSkip',unrun:'nUnrun',inactive:'nInactive',backend:'nBackend',alerts:'nAlerts'}).forEach(([key,id])=>{
+      document.getElementById(id).textContent=(grouped[key]||[]).length.toLocaleString('en-IN');
+    });
+    document.getElementById('csvBtn').disabled=!grouped.final.length;
+    document.getElementById('excelBtn').disabled=!grouped.final.length;
+    renderResults(document.querySelector('.tab.active')?.getAttribute('onclick')?.match(/'([^']+)'\)\s*$/)?.[1]||'final');
+    await saveDailyPriceSnapshot();
     msg.className='message ok';
-    msg.textContent=`Process ready. Backend database contains ${n.toLocaleString('en-IN')} ASINs. Upload daily files to process listings.`;
-    document.getElementById('runBtn').disabled=false;
-  },500);
+    msg.textContent=`Processed ${listings.length.toLocaleString('en-IN')} listings: ${grouped.final.length.toLocaleString('en-IN')} final updates, ${grouped.fba.length.toLocaleString('en-IN')} FBA removed, ${grouped.shops.length.toLocaleString('en-IN')} Local Shops removed, ${grouped.skip.length.toLocaleString('en-IN')} skipped, ${grouped.unrun.length.toLocaleString('en-IN')} unrun.`;
+  }catch(error){
+    console.error(error);
+    msg.className='message error';
+    msg.textContent=`Daily process failed: ${error.message||'Unknown error'}`;
+  }finally{button.disabled=false}
 }
 function showTab(btn,name){
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));btn.classList.add('active');
@@ -589,14 +756,18 @@ function showTab(btn,name){
 }
 function renderResults(name){
   const body=document.getElementById('resultsBody');
-  if(!results.length){document.getElementById('emptyResults').classList.remove('hidden');document.getElementById('resultsTable').classList.add('hidden');return}
-  document.getElementById('emptyResults').classList.add('hidden');document.getElementById('resultsTable').classList.remove('hidden');
-  body.innerHTML=results.map(r=>`<tr><td>${esc(r.ASIN)}</td><td>${esc(r.SKU)}</td><td>${esc(r.STATUS)}</td><td>${esc(r.PRICE)}</td><td>${esc(r.WEIGHT)}</td><td>${esc(r.REFERRAL_FEE)}</td></tr>`).join('');
+  const rows=results[name]||[];
+  const empty=document.getElementById('emptyResults'),table=document.getElementById('resultsTable');
+  if(!rows.length){empty.classList.remove('hidden');table.classList.add('hidden');empty.textContent=Object.keys(results).length?'No records in this tab.':'Run the daily process to view results.';return}
+  const columns=Object.keys(rows[0]);
+  table.querySelector('thead').innerHTML='<tr>'+columns.map(column=>`<th>${esc(column)}</th>`).join('')+'</tr>';
+  body.innerHTML=rows.slice(0,2000).map(row=>'<tr>'+columns.map(column=>`<td>${esc(row[column])}</td>`).join('')+'</tr>').join('');
+  empty.classList.add('hidden');table.classList.remove('hidden');
 }
 function downloadResultsCSV(){
-  if(!results.length){alert('No results available yet.');return}
-  const headers=['ASIN','SKU','STATUS','PRICE','WEIGHT','REFERRAL_FEE'];
-  const lines=[headers.join(',')].concat(results.map(r=>headers.map(h=>csvCell(r[h])).join(',')));
+  if(!results.final?.length){alert('No final upload rows are available yet.');return}
+  const headers=['sku','qty','lead_time_to_ship','sale_price','mrp','min','max','b2b_price'];
+  const lines=[headers.join(',')].concat(results.final.map(row=>headers.map(header=>csvCell(row[header])).join(',')));
   downloadFile('PriceFlow_Final_Upload.csv','text/csv;charset=utf-8',lines.join('\n'));
 }
 function downloadFile(name,type,text){
